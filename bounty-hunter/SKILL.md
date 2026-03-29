@@ -538,6 +538,8 @@ And recommend a **submission order** (strongest PoC first, dependencies noted).
 
 ### Step 4: Submit Reports
 
+**The report .md files are ALWAYS saved regardless of whether API submission works.** They are the source of truth. The API is a convenience — if it fails, the .md files have everything needed for manual submission.
+
 **For HackerOne programs with API token configured:**
 1. Re-read each report from a triager's perspective
 2. Verify all URLs/payloads still work
@@ -546,32 +548,39 @@ And recommend a **submission order** (strongest PoC first, dependencies noted).
    ```bash
    python $TK/scripts/h1_api.py --submit hunt-<target>/reports/report-<letter>-<name>.md <program-handle>
    ```
-   This parses the report, resolves CWE → weakness_id, previews the full payload, and saves it for review. **NOTHING is sent to HackerOne.**
-5. Show the user the dry-run summary: title, severity, weakness, description length, impact length
-6. **ASK the user for final approval**: "Dry run complete. The full report with all markdown, code blocks, and tables will be submitted. Want me to submit for real?"
-7. **Only if user explicitly approves**, submit with `--confirm`:
+5. Show the user the dry-run summary
+6. **ASK the user for approval**
+7. If approved, submit with `--confirm`:
    ```bash
    python $TK/scripts/h1_api.py --submit hunt-<target>/reports/report-<letter>-<name>.md <program-handle> --confirm
    ```
-8. After submission, display the report ID and URL: `https://hackerone.com/reports/<id>`
+8. **If API succeeds**: Display report ID and URL
+9. **If API fails (500, timeout, any error)**: Do NOT retry. Instead:
+   - Tell the user: "API submission failed. The complete report is saved at `hunt-<target>/reports/report-<letter>-<name>.md`"
+   - Open the HackerOne web form in their browser: `python $TK/scripts/auth_manager.py --open-browser "https://hackerone.com/<program>/reports/new?type=team&report_type=vulnerability"`
+   - Show the form-field mapping table so they can copy-paste from the .md file
 
-**NEVER submit test reports.** The `--submit` command without `--confirm` is always a safe dry run.
-
-**For HackerOne programs WITHOUT API token:**
-1. ASK the user: "I can submit reports directly if you set up an API token. Create one at https://hackerone.com/settings/api_token/edit then run: `python $TK/scripts/h1_api.py --setup <identifier> <token>`. Or I can open the web form for manual copy-paste."
-2. If user provides token → set it up, dry-run first, then submit with confirmation
-3. If user declines → open the HackerOne report form in their browser and show the form-field mapping table
-
-**For other platforms (Bugcrowd, Intigriti, Immunefi):**
+**For HackerOne programs WITHOUT API token, or any other platform:**
+- The report .md files are already saved — that's the deliverable
 - Open the platform's report form in the user's browser
-- Show the form-field mapping table for copy-paste
+- Show the mapping table for copy-paste
+
+```
+| Form Field         | Copy from .md section                        |
+|--------------------|----------------------------------------------|
+| Asset              | ## Asset value                                |
+| Weakness           | CWE number from ## Weakness                  |
+| Severity           | Use the CVSS vector string in the calculator |
+| Title              | ## Title                                      |
+| Description        | ## Description + ## Steps to Reproduce        |
+| Impact             | ## Impact                                     |
+```
 
 ### Step 5: Post-Submission Monitoring (HackerOne API only)
-After submission, check report status:
+If API submission succeeded, check report status:
 ```bash
 python $TK/scripts/h1_api.py --status <report-id>
 ```
-Show the user the current state (new, triaged, needs_more_info, etc.).
 
 ---
 
