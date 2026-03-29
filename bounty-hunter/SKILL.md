@@ -285,9 +285,53 @@ The recon orchestrator already handles httpx probing and nmap scanning. Review t
 
 ---
 
+## Phase 5.5: Automatic Authentication (runs automatically)
+
+**Goal:** Obtain authenticated sessions for deeper testing. This runs automatically — try every layer before asking the user for anything.
+
+1. **Run auto-authentication**:
+   ```bash
+   python $TK/scripts/auth_manager.py <primary-domain> hunt-<target>-$(date +%Y%m%d)
+   ```
+   This tries the following layers in order, stopping at the first success:
+
+   - **Layer 1 — Browser cookies (zero user effort)**: Extracts cookies from the user's existing browser sessions (Firefox, Chrome, Edge, Brave) using `browser_cookie3`/`rookiepy`. If the user is already logged into the target in any browser, we get their cookies silently.
+   - **Layer 2 — Playwright headless**: If available, attempts to open the target and extract any pre-existing session state.
+   - **Layer 3 — APK tokens**: Uses hardcoded API keys/tokens found during Phase 3.5 APK analysis.
+
+2. **If auth_manager.py succeeds** (`AUTH_SUCCESS=true`):
+   - Cookies are saved to `hunt-<target>/auth/cookies.json` and `hunt-<target>/auth/cookies.txt` (curl format)
+   - Use `curl -b hunt-<target>/auth/cookies.txt` for all authenticated requests
+   - Use `curl -H "Cookie: $(python $TK/scripts/auth_manager.py --header hunt-<target>/auth/cookies.json <domain>)"` for specific domains
+   - Proceed to Phase 6 with authenticated testing capabilities
+
+3. **If auth_manager.py fails** (no automatic auth found):
+   - **Try Playwright interactive login** (if Playwright is installed):
+     ```bash
+     python $TK/scripts/auth_manager.py --playwright-script <login-url> hunt-<target>/auth/login.js
+     node hunt-<target>/auth/login.js
+     ```
+     This opens a visible browser — the user logs in once, then auth state is saved for all future requests.
+   - **If Playwright not available**: Ask the user to log in to the target in their browser (any browser), then re-run:
+     ```bash
+     python $TK/scripts/auth_manager.py --extract <domain> hunt-<target>/auth
+     ```
+   - **Last resort**: Ask user to paste cookies from DevTools (F12 → Application → Cookies)
+
+4. **Even without authentication, continue to Phase 6** — unauthenticated testing still finds bugs. Just note which tests require auth for later.
+
+---
+
 ## Phase 6: Manual-Guided Testing
 
 **Goal:** Test for vulnerabilities that scanners miss — business logic, auth flaws, IDOR, and complex injection. This is where the money is.
+
+### Step 0: Use Authenticated Session (if available)
+If Phase 5.5 obtained cookies, use them for ALL testing in this phase:
+- For curl: `curl -b hunt-<target>/auth/cookies.txt <url>`
+- For API testing: include the Cookie or Authorization header from auth results
+- If APK tokens were found: use them as `Authorization: Bearer <token>` or appropriate header
+- **Authenticated testing finds IDOR, privilege escalation, and business logic bugs — the highest-paying categories**
 
 ### Step 1: Understand the Application
 Use `WebFetch` to read the target's main pages and understand:
