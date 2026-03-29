@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "bounty-hunter": {
+      "source": "Hero988/bounty-hunter",
+      "sourceType": "github",
+      "computedHash": "66d51d0d2e7ed2c9ebdb5540ce4c83c94ce2c921a0c9a44c157dcedc9903eadc"
+    }
+  }
+}

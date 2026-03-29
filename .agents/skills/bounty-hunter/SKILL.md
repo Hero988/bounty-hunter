@@ -16,11 +16,9 @@ allowed-tools: Bash Read Write Edit Glob Grep WebFetch WebSearch Agent
 
 Automated 8-phase bug bounty pipeline. Pass a program URL or domain and this skill handles everything from reconnaissance to report generation.
 
-**Usage:** `/bounty-hunter <program-url-or-domain> [--phase recon|scan|report] [--resume]`
+**Usage:** `/bounty-hunter <program-url-or-domain> [--phase recon|scan|report|setup|update|health] [--resume]`
 
-## Automatic Bootstrap (runs silently on every invocation)
-
-The following status is detected at invocation time:
+## Toolkit Bootstrap
 
 !`python -c "
 import os, json, time, shutil
@@ -33,51 +31,32 @@ if exists:
         with open(vf) as f: v = json.load(f)
         age_h = (time.time() - os.path.getmtime(vf)) / 3600
         print(f'TOOLKIT=installed VERSION={v.get(chr(34)+chr(34),v.get(\"version\",\"?\"))} AGE_HOURS={age_h:.0f}')
-    else: print('TOOLKIT=installed VERSION=unknown AGE_HOURS=999')
-else: print('TOOLKIT=missing AGE_HOURS=999')
+    else: print('TOOLKIT=installed VERSION=unknown')
+else: print('TOOLKIT=missing')
 tools = {t: bool(shutil.which(t)) for t in ['nuclei','subfinder','httpx','ffuf','katana','nmap']}
 m = [t for t,v in tools.items() if not v]
 print(f'CORE_TOOLS={len(tools)-len(m)}/6 MISSING={\" \".join(m) or \"none\"}')
-# Check nuclei templates age
-import glob
-tdir = os.path.join(home, 'nuclei-templates')
-tcount = len(glob.glob(os.path.join(tdir, '**', '*.yaml'), recursive=True)) if os.path.isdir(tdir) else 0
-print(f'NUCLEI_TEMPLATES={tcount}')
 " 2>/dev/null || echo "TOOLKIT=check_failed"`
 
-**You MUST execute ALL of the following steps automatically and silently before doing anything else. Do NOT ask the user — just do it. Only inform the user if something fails.**
+**On first run or if TOOLKIT=missing:** Clone the toolkit:
+```bash
+git clone https://github.com/Hero988/bounty-hunter-toolkit ~/.bounty-hunter-toolkit
+```
 
-1. **Set TK variable** for all subsequent commands:
-   ```bash
-   TK="$HOME/.bounty-hunter-toolkit"
-   ```
+**If AGE_HOURS > 24:** Update the toolkit:
+```bash
+git -C ~/.bounty-hunter-toolkit pull
+```
 
-2. **If TOOLKIT=missing**: Clone the toolkit silently:
-   ```bash
-   git clone https://github.com/Hero988/bounty-hunter-toolkit "$TK"
-   ```
+**If MISSING tools listed:** Run setup:
+```bash
+python ~/.bounty-hunter-toolkit/scripts/setup.py --install-missing
+```
 
-3. **If AGE_HOURS > 24 or TOOLKIT was just cloned**: Pull latest updates silently:
-   ```bash
-   git -C "$TK" pull 2>/dev/null || true
-   ```
-
-4. **If MISSING is not "none"**: Install missing tools automatically:
-   ```bash
-   python "$TK/scripts/setup.py" --install-missing
-   ```
-
-5. **If NUCLEI_TEMPLATES < 5000**: Update nuclei templates automatically:
-   ```bash
-   nuclei -update-templates 2>/dev/null || true
-   ```
-
-6. **Run quick health check** (output is for your reference only, do NOT show to user unless there are failures):
-   ```bash
-   python "$TK/scripts/health_check.py" --quick 2>/dev/null
-   ```
-
-After all bootstrap steps complete, proceed directly to mode detection. The user should never need to run setup, update, or health check manually — it all happens automatically.
+Set `TK` variable for all subsequent commands:
+```bash
+TK="$HOME/.bounty-hunter-toolkit"
+```
 
 ---
 
@@ -85,6 +64,9 @@ After all bootstrap steps complete, proceed directly to mode detection. The user
 
 Parse `$ARGUMENTS` to determine mode:
 - **No args or `--help`**: Show usage and available commands
+- **`setup`**: Run `python $TK/scripts/setup.py --install-missing --all`
+- **`update`**: Run `python $TK/scripts/update.py --all`
+- **`health`**: Run `python $TK/scripts/health_check.py`
 - **`--resume`**: Run `python $TK/scripts/session_manager.py list` and resume the latest active session
 - **URL or domain**: Start full 8-phase hunt (default)
 - **`--phase recon`**: Run only Phases 1-4
@@ -328,13 +310,18 @@ Use the search queries from dedup_checker.py with `WebSearch` to check:
 
 ---
 
-## Auto-Update (fully automatic)
+## Auto-Update
 
-Everything stays current without user intervention:
+The toolkit stays current through three mechanisms:
 
-1. **Toolkit repo**: `git pull` runs automatically at the start of every session (if >24h since last pull) — updates all scripts, references, payloads, and methodology
-2. **Tool binaries + nuclei templates**: The bootstrap checks for missing/outdated tools and templates on every invocation and updates them silently
-3. **Runtime intelligence**: During every engagement, use `WebSearch` to pull latest CVEs, disclosed reports, and new techniques for the specific target — this is live, no install needed
+1. **Toolkit repo** (`git pull`): Updates scripts, references, payloads — checked at every invocation
+2. **Tool binaries** (`update.py`): Go tools, nuclei templates, wordlists — checked weekly
+3. **Runtime intelligence** (`WebSearch`): Latest CVEs, disclosed reports, new techniques — every engagement
+
+To manually update everything:
+```bash
+git -C ~/.bounty-hunter-toolkit pull && python $TK/scripts/update.py --all
+```
 
 ---
 
