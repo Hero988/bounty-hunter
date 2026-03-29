@@ -374,7 +374,7 @@ Read `$TK/references/methodology/chain-building.md` for:
 
 **Goal:** Validate findings, create reproducible PoCs, and check for duplicates.
 
-### 7-Question Gate — ALL must pass before creating a report:
+### Gate 1: 7-Question Technical Gate — ALL must pass:
 
 1. **Can a real attacker do this RIGHT NOW** against a real user who took no unusual actions?
 2. **Does this cause concrete harm?** (data leak, money loss, account takeover, code execution)
@@ -384,16 +384,56 @@ Read `$TK/references/methodology/chain-building.md` for:
 6. **Can you write clear reproduction steps** a triager can follow in under 5 minutes?
 7. **Does the PoC prove IMPACT**, not just existence?
 
-**If any answer is NO**: Discard (move to `findings/discarded/`) or investigate chaining potential.
+### Gate 2: Bounty Probability Gate — MUST pass before generating a report
 
-### PoC Creation:
-- Write exact curl commands that reproduce the issue
-- Include HTTP request/response pairs
+**CRITICAL: The goal is MONEY without losing reputation. Generating reports that get closed as "Informative" or "N/A" hurts the user's signal-to-noise ratio on HackerOne/Bugcrowd, which reduces access to private programs and lowers future earnings. It is BETTER to submit 1 strong report than 8 weak ones.**
+
+For each finding that passed Gate 1, honestly assess bounty probability:
+
+**AUTO-REJECT — These almost always get closed as Informative (do NOT generate reports):**
+- Missing security headers (CSP, HSTS, X-Frame-Options, etc.)
+- Missing certificate pinning WITHOUT a custom Network Security Config that trusts user CAs (Android 9+ defaults already block user CAs)
+- CORS misconfiguration where you cannot demonstrate actual cross-origin data theft with a working PoC
+- Open redirect that is explicitly excluded or where impact is only phishing
+- Clickjacking on non-sensitive pages
+- Information disclosure of software versions only
+- Rate limiting bypass (frequently excluded)
+- Self-XSS (requires victim to paste payload into their own console)
+- Theoretical attacks without demonstrated data access ("if the WebSocket authenticates via cookies..." — prove it or don't report it)
+- Missing best practices / defense-in-depth improvements (these are NOT vulnerabilities)
+- Internal infrastructure hostnames in headers/CSP without demonstrated access
+- Raw API endpoints without WAF where auth still works correctly
+
+**REQUIRE DEMONSTRATED PROOF for these (do NOT report on theory alone):**
+- CSWSH: Must prove the WebSocket actually processes authenticated commands from evil origin, not just that the 101 handshake completes
+- IDOR: Must show data from ANOTHER user's account, not just a 404/400 on a random UUID
+- SSRF: Must show internal data retrieved, not just that a URL parameter exists
+- Auth bypass: Must show access to protected resources, not just unusual response codes
+- Business logic: Must show actual financial/data impact, not just unexpected behavior
+
+**HIGH PROBABILITY — Generate reports for these:**
+- Working IDOR with demonstrated data access from another user's account
+- Account takeover with full PoC (OAuth redirect, session fixation, etc.)
+- SQL injection with extracted data
+- RCE with command output
+- SSRF with internal data retrieved
+- Hardcoded credentials/tokens that provide actual data access (proven with curl)
+- Privilege escalation with demonstrated elevated access
+- Stored XSS on high-traffic pages with cookie theft PoC
+
+**Rate each finding: SUBMIT / HOLD / DISCARD**
+- **SUBMIT**: Clear reproduction, demonstrated impact, high bounty probability
+- **HOLD**: Promising but needs more evidence (second account for IDOR, device testing, etc.). Save in findings/ but do NOT generate a report yet. Tell the user what additional testing would upgrade it to SUBMIT.
+- **DISCARD**: Low probability of bounty, would hurt reputation. Move to findings/discarded/ with the reason.
+
+### PoC Requirements (for SUBMIT findings only):
+- Write exact curl commands that reproduce the issue and show data in the response
+- Include the actual HTTP response proving the impact (not a theoretical description)
 - Create step-by-step reproduction with exact URLs and parameters
-- Show the impact (what data was accessed, what action was performed)
+- The PoC must be self-contained — a triager can copy-paste and see the bug in under 5 minutes
 - Save to `hunt-<target>/findings/manual-findings/<finding-name>/`
 
-### Duplicate Check:
+### Duplicate Check (for SUBMIT findings only):
 Use the search queries from dedup_checker.py with `WebSearch` to check:
 - HackerOne hacktivity for the same program
 - Public writeups mentioning the same vulnerability
@@ -403,10 +443,23 @@ Use the search queries from dedup_checker.py with `WebSearch` to check:
 
 ## Phase 8: Report Generation
 
-**Goal:** Create submission-ready reports for EVERY validated finding. This happens automatically — do NOT wait for the user to ask.
+**Goal:** Create reports ONLY for findings rated SUBMIT in Phase 7 Gate 2. Quality over quantity — 1 strong report beats 8 weak ones.
+
+### Step 0: Summary Table
+Before generating any reports, display a summary of ALL findings with their Gate 2 rating:
+
+```
+| Finding | Severity | Gate 2 Rating | Reason |
+|---------|----------|---------------|--------|
+| ...     | ...      | SUBMIT/HOLD/DISCARD | ... |
+```
+
+**Only proceed to generate reports for SUBMIT findings.**
+For HOLD findings, explain what additional testing would upgrade them.
+For DISCARD findings, explain why they'd likely be closed as Informative.
 
 ### Step 1: Generate Individual Report Files
-For EACH finding that passed the 7-question gate:
+For EACH finding rated SUBMIT:
 
 1. Read the platform guide: `$TK/references/platforms/<platform>.md`
 2. Read the report template: `$TK/references/report-templates/<platform-abbrev>-template.md`
