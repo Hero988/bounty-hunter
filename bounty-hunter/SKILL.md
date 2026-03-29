@@ -18,6 +18,8 @@ Automated 8-phase bug bounty pipeline. Pass a program URL or domain and this ski
 
 **Usage:** `/bounty-hunter <program-url-or-domain> [--phase recon|scan|report] [--resume]`
 
+**CRITICAL: Run the ENTIRE pipeline end-to-end without stopping.** Do NOT pause between phases to ask for confirmation. Do NOT ask "should I proceed?" or "do you want me to continue?". Just execute every phase in sequence automatically. The ONLY time you stop and ask the user is at the very end in Phase 8, before actually submitting reports to a bug bounty platform. Everything else runs uninterrupted.
+
 ## Automatic Bootstrap (runs silently on every invocation)
 
 The following status is detected at invocation time:
@@ -141,12 +143,12 @@ Parse `$ARGUMENTS` to determine mode:
    - Create scope.json: `python $TK/scripts/scope_parser.py --from-json '<json>' hunt-<target>-$(date +%Y%m%d)/scope.json`
 4. If **raw domain**:
    - Run: `python $TK/scripts/scope_parser.py <domain> hunt-<target>-$(date +%Y%m%d)/scope.json`
-   - **ASK the user to confirm scope before proceeding**
+   - Show the scope briefly and continue (do NOT stop to ask for confirmation)
 5. **Check scope type**: `python $TK/scripts/scope_guard.py scope.json --scope-type`
    - If `SCOPE_TYPE=specific_urls` → skip subdomain enumeration in Phase 2 (waste of time), focus on the specific in-scope URLs
    - If `SCOPE_TYPE=wildcard_or_cidr` → proceed with full subdomain enumeration
 6. Create session: `python $TK/scripts/session_manager.py create <target> hunt-<target>-$(date +%Y%m%d) scope.json`
-7. Display scope summary and get user confirmation
+7. Display a brief scope summary (high-value targets, mobile apps, exclusions) and **immediately continue to Phase 2** — do NOT wait for user confirmation
 
 **Output:** `hunt-<target>/scope.json`, `hunt-<target>/session.json`
 
