@@ -287,38 +287,35 @@ The recon orchestrator already handles httpx probing and nmap scanning. Review t
 
 ## Phase 5.5: Automatic Authentication (runs automatically)
 
-**Goal:** Obtain authenticated sessions for deeper testing. This runs automatically — try every layer before asking the user for anything.
+**Goal:** Obtain authenticated sessions for deeper testing. This runs automatically.
+
+**IMPORTANT LESSON LEARNED:** Playwright does NOT work for login on sites with Cloudflare/Arkose bot protection (they detect automated browsers and block OAuth flows). Chrome 130+ on Windows encrypts cookies so `browser_cookie3`/`rookiepy` often fail too. The most reliable fallback is: open user's real browser → user logs in → paste Cookie header from Network tab. This is ONE step and gets ALL cookies including HttpOnly session tokens.
 
 1. **Run auto-authentication**:
    ```bash
    python $TK/scripts/auth_manager.py <primary-domain> hunt-<target>-$(date +%Y%m%d)
    ```
-   This tries the following layers in order, stopping at the first success:
+   This tries:
+   - **Layer 1 — Browser cookies (zero effort)**: Extracts from Firefox/Chrome/Edge/Brave using `browser_cookie3`/`rookiepy`. Works on Firefox and older Chrome. May fail on Chrome 130+ Windows (app-bound encryption).
+   - **Layer 3 — APK tokens**: Uses hardcoded tokens found during Phase 3.5 APK analysis.
 
-   - **Layer 1 — Browser cookies (zero user effort)**: Extracts cookies from the user's existing browser sessions (Firefox, Chrome, Edge, Brave) using `browser_cookie3`/`rookiepy`. If the user is already logged into the target in any browser, we get their cookies silently.
-   - **Layer 2 — Playwright headless**: If available, attempts to open the target and extract any pre-existing session state.
-   - **Layer 3 — APK tokens**: Uses hardcoded API keys/tokens found during Phase 3.5 APK analysis.
-
-2. **If auth_manager.py succeeds** (`AUTH_SUCCESS=true`):
-   - Cookies are saved to `hunt-<target>/auth/cookies.json` and `hunt-<target>/auth/cookies.txt` (curl format)
+2. **If auto-auth succeeds** (`AUTH_SUCCESS=true`):
+   - Cookies saved to `hunt-<target>/auth/cookies.json` + `hunt-<target>/auth/cookies.txt` (curl format)
    - Use `curl -b hunt-<target>/auth/cookies.txt` for all authenticated requests
-   - Use `curl -H "Cookie: $(python $TK/scripts/auth_manager.py --header hunt-<target>/auth/cookies.json <domain>)"` for specific domains
-   - Proceed to Phase 6 with authenticated testing capabilities
+   - Proceed directly to Phase 6
 
-3. **If auth_manager.py fails** (no automatic auth found):
-   - **Try Playwright interactive login** (if Playwright is installed):
+3. **If auto-auth fails** (most common on Windows with Chrome):
+   The script will open the target in the user's default browser automatically. Then do this **ONE step**:
+   - Tell the user: "I've opened `<domain>` in your browser. Please log in if not already. Then press F12 → Network tab → refresh (F5) → click first request → find the `Cookie:` line in Request Headers → right-click Copy value → paste it here."
+   - **IMPORTANT: Do NOT use `document.cookie` from the Console tab** — it misses HttpOnly cookies (SSO/JWT tokens). Always use the Network tab Cookie header.
+   - When user pastes the cookie string, save it immediately:
      ```bash
-     python $TK/scripts/auth_manager.py --playwright-script <login-url> hunt-<target>/auth/login.js
-     node hunt-<target>/auth/login.js
+     python $TK/scripts/auth_manager.py --parse-header '<pasted-cookie-string>' hunt-<target>/auth <domain>
      ```
-     This opens a visible browser — the user logs in once, then auth state is saved for all future requests.
-   - **If Playwright not available**: Ask the user to log in to the target in their browser (any browser), then re-run:
-     ```bash
-     python $TK/scripts/auth_manager.py --extract <domain> hunt-<target>/auth
-     ```
-   - **Last resort**: Ask user to paste cookies from DevTools (F12 → Application → Cookies)
+   - This creates `cookies.json`, `cookies.txt`, and `cookie-header-full.txt` in one shot
+   - Use `curl -H "Cookie: $(cat hunt-<target>/auth/cookie-header-full.txt)"` for all subsequent requests
 
-4. **Even without authentication, continue to Phase 6** — unauthenticated testing still finds bugs. Just note which tests require auth for later.
+4. **Even without authentication, continue to Phase 6** — unauthenticated testing still finds bugs. Note which tests need auth for later.
 
 ---
 
