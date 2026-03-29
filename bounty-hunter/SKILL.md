@@ -542,18 +542,24 @@ And recommend a **submission order** (strongest PoC first, dependencies noted).
 1. Re-read each report from a triager's perspective
 2. Verify all URLs/payloads still work
 3. Confirm scope and excluded vuln types one final time
-4. **ASK the user for final approval**: "I have X reports ready to submit. Want me to submit them via the HackerOne API?"
-5. If user approves, submit each report:
+4. **DRY RUN first** (safe — nothing is submitted):
    ```bash
    python $TK/scripts/h1_api.py --submit hunt-<target>/reports/report-<letter>-<name>.md <program-handle>
    ```
-   The script auto-resolves `weakness_id` from CWE and `structured_scope_id` from the asset identifier.
-6. After submission, display the report ID and URL for each: `https://hackerone.com/reports/<id>`
-7. Save report IDs to session for status tracking
+   This parses the report, resolves CWE → weakness_id, previews the full payload, and saves it for review. **NOTHING is sent to HackerOne.**
+5. Show the user the dry-run summary: title, severity, weakness, description length, impact length
+6. **ASK the user for final approval**: "Dry run complete. The full report with all markdown, code blocks, and tables will be submitted. Want me to submit for real?"
+7. **Only if user explicitly approves**, submit with `--confirm`:
+   ```bash
+   python $TK/scripts/h1_api.py --submit hunt-<target>/reports/report-<letter>-<name>.md <program-handle> --confirm
+   ```
+8. After submission, display the report ID and URL: `https://hackerone.com/reports/<id>`
+
+**NEVER submit test reports.** The `--submit` command without `--confirm` is always a safe dry run.
 
 **For HackerOne programs WITHOUT API token:**
 1. ASK the user: "I can submit reports directly if you set up an API token. Create one at https://hackerone.com/settings/api_token/edit then run: `python $TK/scripts/h1_api.py --setup <identifier> <token>`. Or I can open the web form for manual copy-paste."
-2. If user provides token → set it up and submit via API
+2. If user provides token → set it up, dry-run first, then submit with confirmation
 3. If user declines → open the HackerOne report form in their browser and show the form-field mapping table
 
 **For other platforms (Bugcrowd, Intigriti, Immunefi):**
