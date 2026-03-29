@@ -40,7 +40,7 @@ print(f'CORE_TOOLS={len(tools)-len(m)}/6 MISSING={\" \".join(m) or \"none\"}')
 
 **On first run or if TOOLKIT=missing:** Clone the toolkit:
 ```bash
-git clone https://github.com/gissu/bounty-hunter-toolkit ~/.bounty-hunter-toolkit
+git clone https://github.com/Hero988/bounty-hunter-toolkit ~/.bounty-hunter-toolkit
 ```
 
 **If AGE_HOURS > 24:** Update the toolkit:

@@ -5,7 +5,7 @@ A Claude Code skill for automated bug bounty hunting. From program URL to submis
 ## Install
 
 ```bash
-npx skills add gissu/bounty-hunter
+npx skills add Hero988/bounty-hunter
 ```
 
 ## Usage
@@ -44,7 +44,7 @@ Core tools (auto-installed): nuclei, subfinder, httpx, ffuf, katana, nmap
 
 ## Architecture
 
-This skill auto-clones the [bounty-hunter-toolkit](https://github.com/gissu/bounty-hunter-toolkit) on first run, which contains all scripts, references, and payloads. The toolkit updates independently via `git pull`.
+This skill auto-clones the [bounty-hunter-toolkit](https://github.com/Hero988/bounty-hunter-toolkit) on first run, which contains all scripts, references, and payloads. The toolkit updates independently via `git pull`.
 
 ## Safety
 
