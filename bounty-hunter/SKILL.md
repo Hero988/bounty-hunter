@@ -23,22 +23,32 @@ Automated 8-phase bug bounty pipeline. Pass a program URL or domain and this ski
 The following status is detected at invocation time:
 
 !`python -c "
-import os, json, time, shutil
+import os, json, time, shutil, subprocess
 home = os.path.expanduser('~')
 tk = os.path.join(home, '.bounty-hunter-toolkit')
 exists = os.path.isdir(tk)
+needs_update = False
 if exists:
     vf = os.path.join(tk, 'version.json')
     if os.path.isfile(vf):
         with open(vf) as f: v = json.load(f)
-        age_h = (time.time() - os.path.getmtime(vf)) / 3600
-        print(f'TOOLKIT=installed VERSION={v.get(chr(34)+chr(34),v.get(\"version\",\"?\"))} AGE_HOURS={age_h:.0f}')
-    else: print('TOOLKIT=installed VERSION=unknown AGE_HOURS=999')
-else: print('TOOLKIT=missing AGE_HOURS=999')
+        print(f'TOOLKIT=installed VERSION={v.get(\"version\",\"?\")}')
+    else: print('TOOLKIT=installed VERSION=unknown')
+    # Compare local HEAD vs remote HEAD to detect updates
+    try:
+        local = subprocess.run('git -C \"'+tk+'\" rev-parse HEAD', shell=True, capture_output=True, text=True, timeout=5).stdout.strip()
+        remote = subprocess.run('git -C \"'+tk+'\" ls-remote origin HEAD', shell=True, capture_output=True, text=True, timeout=10).stdout.split()[0] if subprocess.run('git -C \"'+tk+'\" ls-remote origin HEAD', shell=True, capture_output=True, text=True, timeout=10).stdout else ''
+        if local and remote and local != remote:
+            print('TOOLKIT_UPDATE=available')
+            needs_update = True
+        else:
+            print('TOOLKIT_UPDATE=up_to_date')
+    except: print('TOOLKIT_UPDATE=check_failed')
+else: print('TOOLKIT=missing')
 tools = {t: bool(shutil.which(t)) for t in ['nuclei','subfinder','httpx','ffuf','katana','nmap']}
 m = [t for t,v in tools.items() if not v]
 print(f'CORE_TOOLS={len(tools)-len(m)}/6 MISSING={\" \".join(m) or \"none\"}')
-# Check nuclei templates age
+# Check nuclei templates
 import glob
 tdir = os.path.join(home, 'nuclei-templates')
 tcount = len(glob.glob(os.path.join(tdir, '**', '*.yaml'), recursive=True)) if os.path.isdir(tdir) else 0
@@ -57,10 +67,11 @@ print(f'NUCLEI_TEMPLATES={tcount}')
    git clone https://github.com/Hero988/bounty-hunter-toolkit "$TK"
    ```
 
-3. **If AGE_HOURS > 24 or TOOLKIT was just cloned**: Pull latest updates silently:
+3. **If TOOLKIT_UPDATE=available** (remote has new commits): Pull latest updates silently:
    ```bash
    git -C "$TK" pull 2>/dev/null || true
    ```
+   This ensures users get toolkit updates immediately on next invocation — not on a delay.
 
 4. **If MISSING is not "none"**: Install missing tools automatically:
    ```bash
@@ -77,7 +88,7 @@ print(f'NUCLEI_TEMPLATES={tcount}')
    python "$TK/scripts/health_check.py" --quick 2>/dev/null
    ```
 
-After all bootstrap steps complete, proceed directly to mode detection. The user should never need to run setup, update, or health check manually — it all happens automatically.
+After all bootstrap steps complete, proceed directly to mode detection. The user never needs to run setup, update, or health check manually — it all happens automatically every time the skill is invoked.
 
 ---
 
