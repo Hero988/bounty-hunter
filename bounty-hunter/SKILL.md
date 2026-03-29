@@ -360,27 +360,122 @@ Use the search queries from dedup_checker.py with `WebSearch` to check:
 
 ## Phase 8: Report Generation
 
-**Goal:** Create submission-ready reports that maximize acceptance probability.
+**Goal:** Create submission-ready reports for EVERY validated finding. This happens automatically — do NOT wait for the user to ask.
 
-1. Get the report template: `python $TK/scripts/report_generator.py --template <platform>`
-2. Fill in finding data and generate: `python $TK/scripts/report_generator.py finding.json --platform <platform> --output report.md`
-3. Read the platform guide: `$TK/references/platforms/<platform>.md`
-4. Read the report template: `$TK/references/report-templates/<platform-abbrev>-template.md`
+### Step 1: Generate Individual Report Files
+For EACH finding that passed the 7-question gate:
 
-### Report Quality Rules:
-- **Title**: `[Vuln Type] in [Component] allows [Impact]` — clear, specific, under 80 chars
+1. Read the platform guide: `$TK/references/platforms/<platform>.md`
+2. Read the report template: `$TK/references/report-templates/<platform-abbrev>-template.md`
+3. Write a complete `.md` report file to `hunt-<target>/reports/report-<letter>-<short-name>.md`
+
+Each report file MUST contain these sections (mapped to HackerOne/Bugcrowd form fields):
+
+```markdown
+# HackerOne Report - Finding <Letter>
+
+## Asset
+`<asset>` (<asset type>)
+
+## Weakness
+CWE-<number>: <name>
+
+## Severity
+**<Rating>** (CVSS <score>)
+Vector: `CVSS:3.1/AV:.../AC:.../PR:.../UI:.../S:.../C:.../I:.../A:...`
+
+## Title
+<Concise title under 80 chars>
+
+## Description
+<What the vulnerability is, where it exists, why it matters>
+
+## Steps to Reproduce
+1. <Step with exact URLs, parameters, payloads>
+2. <Include curl commands that a triager can copy-paste>
+3. <Show the vulnerable response>
+
+## Impact
+<Concrete business impact - what an attacker could do>
+
+## Remediation (optional)
+<Suggested fix>
+```
+
+### Step 2: Report Quality Rules
+- **Title**: `[Vuln Type] in [Component] allows [Impact]` — clear, specific
 - **CVSS**: Calculate with `python $TK/scripts/report_generator.py --cvss '<vector>'` — justify every metric choice
-- **Steps to Reproduce**: Numbered, a triager must be able to follow in <5 minutes
+- **Steps to Reproduce**: Numbered, a triager must follow in <5 minutes. Include copy-pasteable curl commands.
 - **Impact**: Concrete business impact, not theoretical risk
 - **Tone**: Professional, human, concise — not robotic or verbose
-- **Evidence**: curl commands, HTTP logs, screenshots (describe what they show)
-- **Remediation**: Optional but increases credibility — suggest a specific fix
+- **Evidence**: curl commands with actual responses, HTTP logs
 
-### Before Submission:
-- Re-read the entire report from a triager's perspective
+### Step 3: Show Submission Guide
+After generating all reports, display a summary table:
+
+```
+| Form Field         | Report Section                               |
+|--------------------|----------------------------------------------|
+| Asset              | ## Asset value                                |
+| Weakness           | CWE number from ## Weakness                  |
+| Severity           | Use the CVSS vector string in the calculator |
+| Title              | The ## Title line                             |
+| Description        | Everything under ## Description               |
+| Impact             | The ## Impact section                         |
+| Steps to Reproduce | The numbered steps with curl commands         |
+```
+
+And recommend a **submission order** (strongest PoC first, dependencies noted).
+
+### Step 4: Before Submission
+- Re-read each report from a triager's perspective
 - Verify all URLs/payloads still work
 - Confirm scope and excluded vuln types one final time
 - **ASK the user for final approval before any submission**
+
+---
+
+## Phase 9: Audit Trail & Documentation (automatic)
+
+**Goal:** Create comprehensive documentation of everything done during the hunt. This phase runs automatically after reports are generated — do NOT wait for the user to ask.
+
+### Step 1: Create Full Audit Trail
+Write `hunt-<target>/FULL-AUDIT-TRAIL.md` containing:
+
+1. **Session Summary** — Target, platform, dates, scope
+2. **Scope Analysis** — Complete scope.json contents, which assets were tested, which were skipped and why
+3. **Methodology** — Which phases ran, which tools were used, configurations
+4. **All Findings** — Both reported AND excluded findings
+5. **Excluded Findings** — For each finding NOT reported: the specific program exclusion or 7-question gate failure that ruled it out
+6. **Evidence Index** — Every file in the hunt directory with its purpose
+7. **Potential Challenges** — Pre-written counter-arguments for likely triager pushback:
+   - "This is informational" → counter with the working PoC and concrete impact
+   - "This is out of scope" → cite the exact scope entry that includes it
+   - "This is a duplicate" → show the dedup check results
+   - "This has no impact" → demonstrate the data/access the vulnerability provides
+8. **Recommendations** — What to test next, what was blocked (geo, time), what showed promise
+
+### Step 2: Create Raw Session Log
+Write `hunt-<target>/RAW-SESSION-LOG.md` containing:
+- Chronological record of every action taken, every command run, every response received
+- Every decision point and the reasoning behind it
+- All tool outputs (summarized for large outputs, full for key evidence)
+- Timestamps for each phase
+
+### Step 3: Show Final Summary
+Display a table of all generated files:
+```
+hunt-<target>/
+├── FULL-AUDIT-TRAIL.md          ← Defense document
+├── RAW-SESSION-LOG.md           ← Complete session log
+├── reports/
+│   ├── report-A-<name>.md       ← Submission-ready reports
+│   ├── report-B-<name>.md
+│   └── ...
+├── findings/                    ← All finding evidence
+├── recon/                       ← All recon data
+└── scope.json                   ← Program scope
+```
 
 ---
 
