@@ -90,6 +90,13 @@ print(f'NUCLEI_TEMPLATES={tcount}')
    python "$TK/scripts/health_check.py" --quick 2>/dev/null
    ```
 
+7. **Check HackerOne API token** (for HackerOne programs — enables API submission, scope fetching, dedup checking):
+   ```bash
+   python "$TK/scripts/h1_api.py" --test 2>/dev/null
+   ```
+   - If `API connection: OK` → great, H1 API is available for scope fetching, hacktivity search, and report submission
+   - If no token configured → inform user ONCE: "For HackerOne programs, you can set up an API token for direct report submission. Create one at https://hackerone.com/settings/api_token/edit then run: `python $TK/scripts/h1_api.py --setup <identifier> <token>`". Then continue without it — the API is optional, not required.
+
 After all bootstrap steps complete, proceed directly to mode detection. The user never needs to run setup, update, or health check manually — it all happens automatically every time the skill is invoked.
 
 ---
@@ -128,14 +135,20 @@ Parse `$ARGUMENTS` to determine mode:
 
 1. Detect platform: `python $TK/scripts/scope_parser.py --detect "$ARGUMENTS"`
 2. If **HackerOne URL**:
-   - **Use the GraphQL API first** (more reliable than WebFetch, HackerOne pages require JS rendering):
+   - **If H1 API token is configured**, use the REST API for structured scope (most reliable):
+     ```bash
+     python $TK/scripts/h1_api.py --scopes <handle>
+     ```
+     This returns scope IDs, asset identifiers, bounty eligibility, and max severity — ready for scope.json.
+     Also fetch weaknesses: `python $TK/scripts/h1_api.py --weaknesses <handle>`
+   - **If no API token**, use the GraphQL API (no auth needed):
      ```bash
      curl -s 'https://hackerone.com/graphql' -H 'Content-Type: application/json' \
        -d '{"query":"query {team(handle:\"<handle>\"){name handle policy structured_scopes(first:100){edges{node{asset_identifier asset_type eligible_for_bounty max_severity instruction}}}}}"}'
      ```
    - Parse the response to extract in-scope/out-of-scope assets, bounty eligibility, and severity caps
    - **If asset_type is GOOGLE_PLAY_APP_ID**: note the package name — APK analysis will be prioritized in Phase 3.5
-   - Fallback to `WebFetch` if GraphQL fails
+   - Fallback to `WebFetch` if both APIs fail
    - Create scope.json: `python $TK/scripts/scope_parser.py --from-json '<json>' hunt-<target>-$(date +%Y%m%d)/scope.json`
 3. If **Bugcrowd/Intigriti/Immunefi URL**:
    - Use `WebFetch` to retrieve the program page
@@ -523,11 +536,36 @@ After generating all reports, display a summary table:
 
 And recommend a **submission order** (strongest PoC first, dependencies noted).
 
-### Step 4: Before Submission
-- Re-read each report from a triager's perspective
-- Verify all URLs/payloads still work
-- Confirm scope and excluded vuln types one final time
-- **ASK the user for final approval before any submission**
+### Step 4: Submit Reports
+
+**For HackerOne programs with API token configured:**
+1. Re-read each report from a triager's perspective
+2. Verify all URLs/payloads still work
+3. Confirm scope and excluded vuln types one final time
+4. **ASK the user for final approval**: "I have X reports ready to submit. Want me to submit them via the HackerOne API?"
+5. If user approves, submit each report:
+   ```bash
+   python $TK/scripts/h1_api.py --submit hunt-<target>/reports/report-<letter>-<name>.md <program-handle>
+   ```
+   The script auto-resolves `weakness_id` from CWE and `structured_scope_id` from the asset identifier.
+6. After submission, display the report ID and URL for each: `https://hackerone.com/reports/<id>`
+7. Save report IDs to session for status tracking
+
+**For HackerOne programs WITHOUT API token:**
+1. ASK the user: "I can submit reports directly if you set up an API token. Create one at https://hackerone.com/settings/api_token/edit then run: `python $TK/scripts/h1_api.py --setup <identifier> <token>`. Or I can open the web form for manual copy-paste."
+2. If user provides token → set it up and submit via API
+3. If user declines → open the HackerOne report form in their browser and show the form-field mapping table
+
+**For other platforms (Bugcrowd, Intigriti, Immunefi):**
+- Open the platform's report form in the user's browser
+- Show the form-field mapping table for copy-paste
+
+### Step 5: Post-Submission Monitoring (HackerOne API only)
+After submission, check report status:
+```bash
+python $TK/scripts/h1_api.py --status <report-id>
+```
+Show the user the current state (new, triaged, needs_more_info, etc.).
 
 ---
 
