@@ -50,6 +50,10 @@ else: print('TOOLKIT=missing')
 tools = {t: bool(shutil.which(t)) for t in ['nuclei','subfinder','httpx','ffuf','katana','nmap']}
 m = [t for t,v in tools.items() if not v]
 print(f'CORE_TOOLS={len(tools)-len(m)}/6 MISSING={\" \".join(m) or \"none\"}')
+# Check ZAP availability
+zap_paths = [shutil.which('zap.sh'), shutil.which('zap')]
+zap_ok = any(zap_paths) or shutil.which('docker')
+print(f'ZAP={\"installed\" if any(zap_paths) else \"docker\" if shutil.which(\"docker\") else \"missing\"}')
 # Check nuclei templates
 import glob
 tdir = os.path.join(home, 'nuclei-templates')
@@ -280,21 +284,44 @@ The recon orchestrator already handles httpx probing and nmap scanning. Review t
 
 ## Phase 5: Vulnerability Scanning
 
-**Goal:** Run automated scanners with tech-aware template selection.
+**Goal:** Run automated scanners — nuclei for known CVEs, OWASP ZAP for active web app testing.
 
-1. Run the vulnerability scanner:
+### Step 1: Nuclei Scanning (known vulnerabilities)
+```bash
+bash $TK/scripts/vuln_scanner.sh hunt-<target>/recon/live-hosts.txt hunt-<target>-$(date +%Y%m%d) scope.json hunt-<target>/recon/tech-profile.md
+```
+This runs nuclei in 4 layers: exposures → CVEs (tech-targeted) → vulnerabilities → custom templates
+
+### Step 2: OWASP ZAP Active Scanning (web app vulnerabilities)
+ZAP finds what nuclei misses: XSS, SQLi, CSRF, path traversal, and other dynamic vulnerabilities.
+
+1. **Check if ZAP is available**:
    ```bash
-   bash $TK/scripts/vuln_scanner.sh hunt-<target>/recon/live-hosts.txt hunt-<target>-$(date +%Y%m%d) scope.json hunt-<target>/recon/tech-profile.md
+   python $TK/scripts/zap_controller.py --status
    ```
-   This runs nuclei in 4 layers: exposures → CVEs (tech-targeted) → vulnerabilities → custom templates
+   - If not running: `python $TK/scripts/zap_controller.py --start`
+   - If ZAP not installed: the script suggests Docker (`docker run -d owasp/zap2docker-stable zap.sh -daemon`) or manual install. Skip ZAP scanning if unavailable — nuclei results are still valuable.
 
-2. Review findings: Read `hunt-<target>/findings/automated-findings.json`
-3. Triage results:
-   - **Critical/High**: Investigate immediately, validate manually
-   - **Medium**: Investigate if time allows, check for chaining potential
-   - **Low/Info**: Note for later, check chain-building reference
-4. For each promising finding, run scope guard: `python $TK/scripts/scope_guard.py scope.json <target-url>`
-5. Update session phase
+2. **Run ZAP full pipeline on scope**:
+   ```bash
+   python $TK/scripts/zap_controller.py --hunt hunt-<target>-$(date +%Y%m%d)/scope.json hunt-<target>-$(date +%Y%m%d)
+   ```
+   This automatically: reads scope.json → loads auth cookies (if available from Phase 5.5) → spiders all in-scope URLs → runs active scan → exports alerts → generates report.
+
+3. **If auth cookies are available** (from Phase 5.5), ZAP loads them automatically from `hunt-<target>/auth/cookies.json`. For manual cookie loading:
+   ```bash
+   python $TK/scripts/zap_controller.py --set-cookies <domain> hunt-<target>/auth/cookies.json
+   ```
+
+4. **Review ZAP findings**: Read `hunt-<target>/zap/alerts.json` and `hunt-<target>/zap/report.html`
+
+### Step 3: Triage Combined Results
+Review findings from BOTH nuclei and ZAP:
+- **Critical/High**: Investigate immediately, validate manually
+- **Medium**: Investigate if time allows, check for chaining potential
+- **Low/Info**: Note for later, check chain-building reference
+- For each promising finding, run scope guard: `python $TK/scripts/scope_guard.py scope.json <target-url>`
+- Update session phase
 
 ---
 
