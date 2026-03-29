@@ -125,15 +125,28 @@ Parse `$ARGUMENTS` to determine mode:
 **Goal:** Parse the program scope into a structured scope.json file.
 
 1. Detect platform: `python $TK/scripts/scope_parser.py --detect "$ARGUMENTS"`
-2. If **HackerOne/Bugcrowd/Intigriti/Immunefi URL**:
-   - Use `WebFetch` to retrieve the program page
-   - Extract: in-scope domains/wildcards, out-of-scope assets, bounty table, excluded vuln types, program rules
+2. If **HackerOne URL**:
+   - **Use the GraphQL API first** (more reliable than WebFetch, HackerOne pages require JS rendering):
+     ```bash
+     curl -s 'https://hackerone.com/graphql' -H 'Content-Type: application/json' \
+       -d '{"query":"query {team(handle:\"<handle>\"){name handle policy structured_scopes(first:100){edges{node{asset_identifier asset_type eligible_for_bounty max_severity instruction}}}}}"}'
+     ```
+   - Parse the response to extract in-scope/out-of-scope assets, bounty eligibility, and severity caps
+   - **If asset_type is GOOGLE_PLAY_APP_ID**: note the package name — APK analysis will be prioritized in Phase 3.5
+   - Fallback to `WebFetch` if GraphQL fails
    - Create scope.json: `python $TK/scripts/scope_parser.py --from-json '<json>' hunt-<target>-$(date +%Y%m%d)/scope.json`
-3. If **raw domain**:
+3. If **Bugcrowd/Intigriti/Immunefi URL**:
+   - Use `WebFetch` to retrieve the program page
+   - Extract: in-scope assets, out-of-scope, bounty table, excluded vuln types, program rules
+   - Create scope.json: `python $TK/scripts/scope_parser.py --from-json '<json>' hunt-<target>-$(date +%Y%m%d)/scope.json`
+4. If **raw domain**:
    - Run: `python $TK/scripts/scope_parser.py <domain> hunt-<target>-$(date +%Y%m%d)/scope.json`
    - **ASK the user to confirm scope before proceeding**
-4. Create session: `python $TK/scripts/session_manager.py create <target> hunt-<target>-$(date +%Y%m%d) scope.json`
-5. Display scope summary and get user confirmation
+5. **Check scope type**: `python $TK/scripts/scope_guard.py scope.json --scope-type`
+   - If `SCOPE_TYPE=specific_urls` → skip subdomain enumeration in Phase 2 (waste of time), focus on the specific in-scope URLs
+   - If `SCOPE_TYPE=wildcard_or_cidr` → proceed with full subdomain enumeration
+6. Create session: `python $TK/scripts/session_manager.py create <target> hunt-<target>-$(date +%Y%m%d) scope.json`
+7. Display scope summary and get user confirmation
 
 **Output:** `hunt-<target>/scope.json`, `hunt-<target>/session.json`
 
@@ -157,9 +170,14 @@ Parse `$ARGUMENTS` to determine mode:
    - Document findings in `hunt-<target>/recon/osint-notes.md`
 
 3. Review tech profile: `cat hunt-<target>/recon/tech-profile.md`
-4. Update session: `python $TK/scripts/session_manager.py update <session-id> passive_recon --completed`
+4. **Check for geo-restrictions**: Read `hunt-<target>/recon/geo-report.md` if it exists
+   - If targets are geo-blocked: reprioritize to accessible targets + mobile APK analysis
+   - **WARNING:** "Virtual" VPN servers (e.g., NordVPN "India - Virtual") route through other countries and will NOT bypass geo-restrictions. Use a cloud VPS with a real IP in the target region (GCP asia-south1, AWS ap-south-1, etc.) or prioritize APK analysis which bypasses geo-restrictions entirely.
+5. **Analyze historical URLs**: `python $TK/scripts/wayback_analyzer.py hunt-<target>/recon/urls.txt hunt-<target>-$(date +%Y%m%d)`
+   - Review the prioritized report for API endpoints, admin panels, PII in URLs, sensitive files
+6. Update session: `python $TK/scripts/session_manager.py update <session-id> passive_recon --completed`
 
-**Key outputs:** `recon/subdomains.txt`, `recon/live-hosts.json`, `recon/tech-profile.md`, `recon/urls.txt`
+**Key outputs:** `recon/subdomains.txt`, `recon/live-hosts.json`, `recon/tech-profile.md`, `recon/urls.txt`, `recon/geo-report.md`
 
 ---
 
@@ -183,6 +201,42 @@ The recon orchestrator already handles httpx probing and nmap scanning. Review t
 - Status 403 → MEDIUM (test bypass: path traversal, verb tampering, header manipulation)
 - Status 301/302 → LOW (check redirect destination, open redirect)
 - Status 500 → MEDIUM (check for error-based info disclosure)
+
+---
+
+## Phase 3.5: Mobile App Analysis (when mobile apps are in scope)
+
+**Goal:** Analyze Android APKs for hardcoded secrets, API endpoints, and misconfigurations. This phase often yields the highest-value findings — APK analysis found 3 reportable bugs in the Meesho engagement while web recon found only low-severity issues.
+
+**Run this phase BEFORE vulnerability scanning if any of these are true:**
+- scope.json contains assets with type `GOOGLE_PLAY_APP_ID`
+- The target has a known mobile app
+- Web targets are geo-blocked (APK analysis bypasses geo-restrictions)
+- The user mentions mobile testing
+
+1. **Download and analyze the APK**:
+   ```bash
+   python $TK/scripts/apk_analyzer.py <package-name-or-apk-path> hunt-<target>-$(date +%Y%m%d)
+   ```
+   This decompiles the APK, scans for secrets, extracts API endpoints, and analyzes the manifest.
+
+2. **Review findings**: Read `hunt-<target>/apk-analysis/report.md` and `hunt-<target>/apk-analysis/findings.json`
+
+3. **For each hardcoded token/key found** (this is critical — read `$TK/references/methodology/apk-analysis-checklist.md`):
+   - Test against every discovered API endpoint
+   - Use mobile User-Agent headers: `-H "User-Agent: okhttp/4.x"`
+   - Check if the token bypasses WAF/geo-restrictions
+   - Document what data each token provides access to
+   - Check read-only vs read-write access
+   - Test if it can access other users' data (IDOR)
+
+4. **Check exported components**: Test exported activities via deep links for auth bypass
+
+5. **Check JS interfaces in WebViews**: If `@JavascriptInterface` is found, test for XSS-to-native-bridge attacks
+
+6. **If APK download fails** (geo-restricted Play Store): Try fallback sources (APKPure, APKCombo) or analyze the web/WebView version instead
+
+**Reference:** `$TK/references/methodology/apk-analysis-checklist.md` — full checklist with grep patterns and report templates
 
 ---
 
@@ -343,7 +397,7 @@ Use the search queries from dedup_checker.py with `WebSearch` to check:
 
 Everything stays current without user intervention:
 
-1. **Toolkit repo**: `git pull` runs automatically at the start of every session (if >24h since last pull) — updates all scripts, references, payloads, and methodology
+1. **Toolkit repo**: `git pull` runs automatically at the start of every session when remote has new commits — updates all scripts, references, payloads, and methodology instantly
 2. **Tool binaries + nuclei templates**: The bootstrap checks for missing/outdated tools and templates on every invocation and updates them silently
 3. **Runtime intelligence**: During every engagement, use `WebSearch` to pull latest CVEs, disclosed reports, and new techniques for the specific target — this is live, no install needed
 
@@ -369,9 +423,10 @@ Load these on demand when needed during testing:
 | File | When to Read |
 |------|-------------|
 | `$TK/references/methodology/recon-playbook.md` | Planning and executing reconnaissance |
-| `$TK/references/methodology/manual-testing-guide.md` | Deciding what to test manually |
+| `$TK/references/methodology/manual-testing-guide.md` | Deciding what to test manually + token validation |
 | `$TK/references/methodology/chain-building.md` | Found a low-severity bug, looking to chain |
 | `$TK/references/methodology/target-prioritization.md` | Choosing programs or features to test |
+| `$TK/references/methodology/apk-analysis-checklist.md` | Mobile APK analysis, secret scanning, token testing |
 
 ### Payloads
 | File | When to Read |
