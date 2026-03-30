@@ -310,7 +310,16 @@ The recon orchestrator already handles httpx probing and nmap scanning. Review t
 
 4. **SPA Catch-All Detection**: Test if random paths return 200 — if so, the app uses client-side routing and non-API 200s are false positives
 
-3. Review discovered parameters: `cat hunt-<target>/recon/parameters.json`
+5. **SAP/OData API Discovery** (when SAP technology detected — look for `sap-server`, `sap-client` headers, `/sap/` paths):
+   - Fetch OData `$metadata`: `curl -H "Cookie: $COOKIES" "$TARGET/\$metadata"` (usually 10-100KB XML with full entity model)
+   - Run the OData analyzer: `python $TK/scripts/odata_analyzer.py <metadata-url-or-file> hunt-<target>/recon --cookies hunt-<target>/auth/cookies.txt`
+   - This extracts all entity types, writable fields, function imports, and generates test commands
+   - Fetch `manifest.json` for SAP UI5 apps — reveals routes with `{account}` and `{id}` parameters (IDOR candidates), additional data sources, and model bindings
+   - Fetch `Component-preload.js` — contains ALL bundled app logic (controllers, views, services)
+   - Search the JS bundle for: OData entity reads/writes, navigation patterns with ID parameters, payment flows, admin URLs, dev/QA server hostnames
+   - **Reference:** `$TK/references/methodology/sap-odata-testing-guide.md`
+
+6. Review discovered parameters: `cat hunt-<target>/recon/parameters.json`
    - Flag interesting parameters: `id`, `user`, `account`, `file`, `path`, `url`, `redirect`, `callback`, `template`, `query`, `search`, `cmd`, `exec`
 
 4. Update session phase
@@ -403,7 +412,14 @@ Review findings from BOTH nuclei and ZAP:
    - This creates `cookies.json`, `cookies.txt`, and `cookie-header-full.txt` in one shot
    - Use `curl -H "Cookie: $(cat hunt-<target>/auth/cookie-header-full.txt)"` for all subsequent requests
 
-4. **Even without authentication, continue to Phase 6** — unauthenticated testing still finds bugs. Note which tests need auth for later.
+4. **SAML/SSO-protected targets** (common with SAP, enterprise apps):
+   - Auto-auth almost always fails on SAML targets — browser_cookie3 can't extract HttpOnly SAML session cookies on modern Chrome
+   - The SAML redirect page (HTTP 200 with auto-submitting POST form to IdP) is a reliable indicator
+   - Key cookies to look for: `MYSAPSSO2` (SAP SSO token), `SAP_SESSIONID_*` (SAP session), `sap-usercontext` (client/language)
+   - When user pastes cookies, verify auth works by checking if the OData `$metadata` or app `index.html` returns actual content instead of the SAML redirect page
+   - SAML session cookies typically expire in 8-12 hours — note this for long testing sessions
+
+5. **Even without authentication, continue to Phase 6** — unauthenticated testing still finds bugs. Note which tests need auth for later.
 
 ---
 
@@ -442,6 +458,7 @@ Use `WebFetch` to read the target's main pages and understand:
 | Redirects | `$TK/references/vuln-classes/client-side.md` | Open redirect, CSPT, OAuth flow abuse |
 | Admin panel | `$TK/references/vuln-classes/access-control.md` | Auth bypass, vertical privilege escalation |
 | Signed API auth (X-API-KEY) | `$TK/references/vuln-classes/api-security.md` | Replay attack, timestamp bypass, algorithm confusion, key storage |
+| SAP/OData API | `$TK/references/methodology/sap-odata-testing-guide.md` | IDOR via entity keys, XSS in free-text fields, $filter injection, function import abuse, CSRF bypass |
 
 ### Step 3: Execute Testing
 For each selected area:
@@ -481,6 +498,41 @@ instead of just `POST https://api.target.com/graphql/`
 - Mobile: `/graphql/` (Bearer token auth)
 - Seller API: `/seller-api/graphql/` (OAuth)
 Always check for multiple GraphQL endpoints.
+
+### Step 3.6: SAP OData IDOR & XSS Testing (when SAP/OData is present)
+
+**IMPORTANT LESSONS LEARNED from real-world testing (KU Leuven engagement):**
+
+**SAP Backend Key Override Pattern:** Many SAP custom Z-services override the requested entity key with the current authenticated user's ID server-side. For example, requesting `Applicants('ANOTHER_USER_ID')` still returns YOUR data. Test this by comparing the requested key with the response `__metadata.id` — if they differ, the backend is overriding the key (IDOR is blocked).
+
+**OData IDOR Testing Strategy:**
+1. Read `$metadata` to identify all entity types and their key fields
+2. Get your own data first (use key `'0'` — SAP often maps this to current user)
+3. Try adjacent/sequential IDs: if your ID is `IN00966041`, try `IN00966040`
+4. Compare the response's `__metadata.id` with your request — if it always maps to your own ID, the backend enforces user-level isolation
+5. Test BOTH read IDOR (GET entity) AND write IDOR (MERGE/PUT with another user's key)
+6. Test navigation properties: `Applicants('OTHER_ID')/PersInfos` may have different auth than `PersInfos('OTHER_ID')`
+
+**OData XSS via Write Operations:**
+1. Use the OData analyzer output to identify writable text fields with no MaxLength constraint
+2. Target `additionalRemarks`, notes, comments, description fields — these accept free text
+3. Inject payloads via MERGE (partial update): `curl -X MERGE -H "x-csrf-token: $TOKEN" -d '{"additionalRemarks":"<img src=x onerror=alert(document.domain)>"}' "$ENDPOINT/Entity('0')"`
+4. Verify storage by reading back: if the GET response contains raw HTML, XSS is stored
+5. **"Stored but Frontend-Escaped" Pattern:** SAP UI5 `sap.m.TextArea` controls escape HTML on output. But the XSS IS still stored in the database and is reportable because:
+   - Admin staff view applicant data via SAP GUI/WebDynpro which commonly renders HTML
+   - Data exports (PDF, Excel) may include unsanitized HTML
+   - Other API consumers trust and render the data
+   - Check the UI5 views for `FormattedText` controls with `htmlText` binding — these render HTML directly
+6. **Business validation workaround:** If entity updates fail with "data not complete", try simpler entities first (Language, Scholarship have fewer required fields than PersInfo/Address)
+
+**CSRF Token Flow:**
+```bash
+# Fetch token
+CSRF=$(curl -s -D - -H "x-csrf-token: fetch" "$ODATA_URL/" | grep -i "x-csrf-token" | awk '{print $2}' | tr -d '\r')
+# Use in write operations
+curl -X MERGE -H "x-csrf-token: $CSRF" -H "Content-Type: application/json" -d '...' "$ODATA_URL/Entity('0')"
+```
+Test without CSRF token to verify enforcement. Also test `X-HTTP-Method-Override` bypass.
 
 ### Step 4: Chain Building
 Read `$TK/references/methodology/chain-building.md` for:
@@ -540,6 +592,7 @@ For each finding that passed Gate 1, honestly assess bounty probability:
 - Hardcoded credentials/tokens that provide actual data access (proven with curl)
 - Privilege escalation with demonstrated elevated access
 - Stored XSS on high-traffic pages with cookie theft PoC
+- **Stored XSS in API fields (even if frontend escapes):** If an API stores raw HTML/JS without sanitization and the data is viewed by admins/staff through backend interfaces (SAP GUI, admin dashboards, exports), this IS reportable as Stored XSS targeting admin users. The frontend escaping is a control, not a fix — the server-side vulnerability exists regardless. Frame the impact around admin-facing rendering and downstream data consumers.
 
 **Rate each finding: SUBMIT / HOLD / DISCARD**
 - **SUBMIT**: Clear reproduction, demonstrated impact, high bounty probability
@@ -778,6 +831,7 @@ Load these on demand when needed during testing:
 | `$TK/references/methodology/chain-building.md` | Found a low-severity bug, looking to chain |
 | `$TK/references/methodology/target-prioritization.md` | Choosing programs or features to test |
 | `$TK/references/methodology/apk-analysis-checklist.md` | Mobile APK analysis, secret scanning, token testing |
+| `$TK/references/methodology/sap-odata-testing-guide.md` | SAP OData API testing, IDOR, XSS in MERGE/PUT, CSRF, $filter injection |
 
 ### Payloads
 | File | When to Read |
