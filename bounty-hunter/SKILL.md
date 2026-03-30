@@ -346,7 +346,7 @@ Review findings from BOTH nuclei and ZAP:
 
 3. **If auto-auth fails** (most common on Windows with Chrome):
    The script will open the target in the user's default browser automatically. Then do this **ONE step**:
-   - Tell the user: "I've opened `<domain>` in your browser. Please log in if not already. Then press F12 → Network tab → refresh (F5) → click first request → find the `Cookie:` line in Request Headers → right-click Copy value → paste it here."
+   - Tell the user: "I've opened `<domain>` in your browser. Please log in if not already. Then press F12 -> Network tab -> refresh (F5) -> click first request -> find the `Cookie:` line in Request Headers -> right-click Copy value -> paste it here."
    - **IMPORTANT: Do NOT use `document.cookie` from the Console tab** — it misses HttpOnly cookies (SSO/JWT tokens). Always use the Network tab Cookie header.
    - When user pastes the cookie string, save it immediately:
      ```bash
@@ -401,6 +401,37 @@ For each selected area:
 3. Test systematically following the checklist
 4. Document each test attempt and result
 5. If you find something, immediately validate and check for chain opportunities
+
+### Step 3.5: GraphQL IDOR Testing (when GraphQL is present)
+
+**IMPORTANT LESSONS LEARNED from real-world testing:**
+
+**Cloudflare WAF Bypass:** Many GraphQL endpoints behind Cloudflare return empty responses unless `operationName` is passed as a URL query parameter. Always use:
+```
+POST https://api.target.com/graphql/?operationName=OperationName
+```
+instead of just `POST https://api.target.com/graphql/`
+
+**Two-Account IDOR Testing Strategy:**
+1. Create two test accounts (use email aliasing: `user@wearehackerone.com` and `user+test2@wearehackerone.com`)
+2. Use `token_refresh.py` to manage short-lived tokens:
+   ```bash
+   python $TK/scripts/token_refresh.py setup target1 <refresh-endpoint> <refresh-token> --header "Authorization: Bearer {refresh_token}"
+   ```
+3. Run automated IDOR testing with the GraphQL IDOR tester:
+   ```bash
+   python $TK/scripts/graphql_idor_tester.py <endpoint> "$TOKEN1" "$TOKEN2" --auto-extract <decompiled-dir>
+   ```
+4. For manual testing: create data on Account 1 (addresses, orders, listings), then try accessing it from Account 2
+5. Test BOTH read IDOR (can you view?) AND write IDOR (can you modify/delete?)
+
+**APK Query Extraction:** When mobile apps use Apollo GraphQL, the decompiled APK contains the EXACT query strings with correct field names. Use `graphql_idor_tester.py --auto-extract` to find all queries with ID parameters automatically.
+
+**Web vs Mobile GraphQL Endpoints:** Some targets serve GraphQL at different paths for web vs mobile:
+- Web: `/services/graphql/` (cookie auth)
+- Mobile: `/graphql/` (Bearer token auth)
+- Seller API: `/seller-api/graphql/` (OAuth)
+Always check for multiple GraphQL endpoints.
 
 ### Step 4: Chain Building
 Read `$TK/references/methodology/chain-building.md` for:
