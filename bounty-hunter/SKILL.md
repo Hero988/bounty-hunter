@@ -249,7 +249,9 @@ The recon orchestrator already handles httpx probing and nmap scanning. Review t
 
 ## Phase 3.5: Mobile App Analysis (when mobile apps are in scope)
 
-**Goal:** Analyze Android APKs for hardcoded secrets, API endpoints, and misconfigurations. This phase often yields the highest-value findings — APK analysis found 3 reportable bugs in the Meesho engagement while web recon found only low-severity issues.
+**Goal:** Analyze Android APKs for hardcoded secrets, API endpoints, and misconfigurations.
+
+**CRITICAL LESSON LEARNED (Meesho 2026-03): APK static analysis yields many "findings" but most are NOT bounty-worthy.** Of 3 APK reports submitted to Meesho, 2 were closed as N/A because they were either legitimate features or required physical device access. APK analysis is valuable for DISCOVERING attack surface (endpoints, tokens, auth flows) but the findings themselves must be validated for REMOTE exploitability before reporting. See Phase 7 Gate 2 for the full APK auto-reject checklist.
 
 **Run this phase BEFORE vulnerability scanning if any of these are true:**
 - scope.json contains assets with type `GOOGLE_PLAY_APP_ID`
@@ -278,6 +280,13 @@ The recon orchestrator already handles httpx probing and nmap scanning. Review t
 5. **Check JS interfaces in WebViews**: If `@JavascriptInterface` is found, test for XSS-to-native-bridge attacks
 
 6. **If APK download fails** (geo-restricted Play Store): Try fallback sources (APKPure, APKCombo) or analyze the web/WebView version instead
+
+7. **CRITICAL: Filter APK findings before reporting** — For EACH finding from APK analysis, ask these questions:
+   - **Is this a legitimate feature?** Device-auth, OTP-less re-login, biometric fallback, debug menus — these are standard mobile patterns, not vulnerabilities. Research what the code actually does before labeling it a "backdoor" or "hidden functionality."
+   - **Can this be exploited REMOTELY?** If exploitation requires physical device access, ADB, root, or jailbreak — STOP. Most programs exclude physical access. Android sandbox (Android 9+) protects SharedPreferences and app data from other apps.
+   - **Does the token/key access SENSITIVE data?** App-level API keys returning feature flags or configuration is expected. Only report if the key accesses user PII, financial data, or allows unauthorized state changes.
+   - **Does the PoC demonstrate actual harm?** An error response (HTTP 462, 400, 500) proves an endpoint exists, not that it's exploitable. Must show successful unauthorized access.
+   - **Check the program exclusion list** for: "physical access requirements", "OAuth secrets in APKs without impact", "lack of binary protections", "unencrypted device storage without risk", "missing cert pinning/root detection/obfuscation"
 
 **Reference:** `$TK/references/methodology/apk-analysis-checklist.md` — full checklist with grep patterns and report templates
 
@@ -548,7 +557,7 @@ Read `$TK/references/methodology/chain-building.md` for:
 
 ### Gate 1: 7-Question Technical Gate — ALL must pass:
 
-1. **Can a real attacker do this RIGHT NOW** against a real user who took no unusual actions?
+1. **Can a REMOTE attacker do this RIGHT NOW** against a real user who took no unusual actions? (If it requires physical device access, ADB, root, or jailbreak — the answer is NO for most programs. Check the exclusion list for "physical access requirements.")
 2. **Does this cause concrete harm?** (data leak, money loss, account takeover, code execution)
 3. **Is this likely NOT a duplicate?** Run: `python $TK/scripts/dedup_checker.py "<vuln_type>" "<target>" "<component>"`
 4. **Is this in scope AND not in excluded vulnerability types?** Run: `python $TK/scripts/scope_guard.py scope.json <target>` AND `python $TK/scripts/scope_guard.py scope.json --check-vuln "<vuln_type>"`
@@ -575,6 +584,11 @@ For each finding that passed Gate 1, honestly assess bounty probability:
 - Missing best practices / defense-in-depth improvements (these are NOT vulnerabilities)
 - Internal infrastructure hostnames in headers/CSP without demonstrated access
 - Raw API endpoints without WAF where auth still works correctly
+- **APK findings requiring physical device access** — Debug menus, SharedPreferences manipulation, exported components requiring ADB/USB access. Android sandbox protects app data from other apps. If your PoC starts with `adb shell "run-as ..."` or requires physical device access, it WILL be rejected. Most programs explicitly exclude "physical access requirements." **(Meesho 2026-03: GodMode debug menu rejected — "requires physical access to unlocked device, outside our threat model")**
+- **"Hidden" APK functionality that is actually a legitimate feature** — Device-auth, OTP-less re-login for returning devices, biometric auth fallbacks, and passwordless re-authentication are standard mobile patterns. Just because code lives in a package named "backdoor" does NOT make it a backdoor. If the feature only works for previously-authenticated devices, it's not an auth bypass. **(Meesho 2026-03: Device-auth "backdoor" rejected — "OTP-less login feature, not a security bug")**
+- **Debug/developer menus in production APKs** — Extremely common in Android apps. Unless the menu is remotely triggerable by another app or exposes data across the Android sandbox boundary, it is not a vulnerability. SharedPreferences are OS-protected on Android 9+.
+- **App-level API keys/tokens returning non-PII configuration data** — Most mobile apps ship with backend API keys. Returning feature flags, internal hostnames, or app configuration is typically informational. Only report if the token provides access to user PII, allows state changes, or enables account takeover.
+- **APK endpoints returning error codes as "proof" of existence** — An HTTP 462/400/500 from an API endpoint proves the handler exists, not that it's exploitable. Error responses are defense working correctly, not vulnerabilities. Must demonstrate successful exploitation, not just that the endpoint responds.
 
 **REQUIRE DEMONSTRATED PROOF for these (do NOT report on theory alone):**
 - CSWSH: Must prove the WebSocket actually processes authenticated commands from evil origin, not just that the 101 handshake completes
@@ -582,6 +596,9 @@ For each finding that passed Gate 1, honestly assess bounty probability:
 - SSRF: Must show internal data retrieved, not just that a URL parameter exists
 - Auth bypass: Must show access to protected resources, not just unusual response codes
 - Business logic: Must show actual financial/data impact, not just unexpected behavior
+- **APK "backdoor" / hidden auth flow**: Must prove it can be exploited REMOTELY to log in as another user or bypass auth on a NEW device. Device-auth and OTP-less re-login are common features — prove it's a BUG by showing unauthorized access, not just that the code exists. An error response (HTTP 462, 400, etc.) from an endpoint proves nothing except that validation is working.
+- **APK hardcoded tokens/keys**: Must show the token provides access to SENSITIVE user data (PII, financial data, other users' accounts), not just app configuration or feature flags. Show the actual response data and explain why it's harmful — "230+ config keys" is less compelling than "can read any user's payment details."
+- **APK debug menus / developer tools**: Must demonstrate exploitation WITHOUT physical device access. If the only path is ADB, rooted device, or shared device physical access, it will be rejected. Must show either: (a) another app can trigger it, (b) a remote vector exists (deep link, intent), or (c) data leaks across the sandbox to other apps.
 
 **HIGH PROBABILITY — Generate reports for these:**
 - Working IDOR with demonstrated data access from another user's account
