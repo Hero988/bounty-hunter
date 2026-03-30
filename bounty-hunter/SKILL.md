@@ -154,18 +154,41 @@ Parse `$ARGUMENTS` to determine mode:
    - **If asset_type is GOOGLE_PLAY_APP_ID**: note the package name — APK analysis will be prioritized in Phase 3.5
    - Fallback to `WebFetch` if both APIs fail
    - Create scope.json: `python $TK/scripts/scope_parser.py --from-json '<json>' hunt-<target>-$(date +%Y%m%d)/scope.json`
-3. If **Bugcrowd/Intigriti/Immunefi URL**:
+3. If **Intigriti URL**:
+   - **If Intigriti API token is available** (check `$TK/.intigriti-token` or environment variable `INTIGRITI_TOKEN`):
+     ```bash
+     # Step 1: Find program by handle from the URL
+     HANDLE=$(echo "$URL" | grep -oE 'programs/[^/]+/[^/]+' | cut -d/ -f3)
+     COMPANY=$(echo "$URL" | grep -oE 'programs/[^/]+' | cut -d/ -f2)
+
+     # Step 2: Search for the program ID
+     curl -s -H "Authorization: Bearer $INTIGRITI_TOKEN" \
+       "https://api.intigriti.com/external/researcher/v1/programs?statusId=3&limit=500" \
+       | python -c "import json,sys; programs=json.load(sys.stdin)['records']; match=[p for p in programs if p['handle']=='$HANDLE']; print(json.dumps(match[0]) if match else 'NOT_FOUND')"
+
+     # Step 3: Get full program details with scope
+     curl -s -H "Authorization: Bearer $INTIGRITI_TOKEN" \
+       "https://api.intigriti.com/external/researcher/v1/programs/$PROGRAM_ID"
+     ```
+     The response includes `domains.content[]` with each asset's `endpoint`, `type` (Url=1, Android=2, iOS=3, IpRange=4, Wildcard=7), and `tier` (Tier1=4, Tier2=3, Tier3=2, NoBounty=1, OutOfScope=5).
+     Also check `rulesOfEngagement.content.testingRequirements` for:
+     - `automatedTooling` — scanner policy
+     - `userAgent` — required User-Agent header
+     - `requestHeader` — required custom header
+   - **If no API token**, inform user ONCE: "For Intigriti programs, set up an API token at https://app.intigriti.com/researcher/personal-access-tokens then save it: `echo 'YOUR_TOKEN' > $TK/.intigriti-token`". Then fall back to `WebFetch`.
+   - Create scope.json from the API response
+4. If **Bugcrowd/Immunefi URL**:
    - Use `WebFetch` to retrieve the program page
    - Extract: in-scope assets, out-of-scope, bounty table, excluded vuln types, program rules
    - Create scope.json: `python $TK/scripts/scope_parser.py --from-json '<json>' hunt-<target>-$(date +%Y%m%d)/scope.json`
-4. If **raw domain**:
+5. If **raw domain**:
    - Run: `python $TK/scripts/scope_parser.py <domain> hunt-<target>-$(date +%Y%m%d)/scope.json`
    - Show the scope briefly and continue (do NOT stop to ask for confirmation)
-5. **Check scope type**: `python $TK/scripts/scope_guard.py scope.json --scope-type`
+6. **Check scope type**: `python $TK/scripts/scope_guard.py scope.json --scope-type`
    - If `SCOPE_TYPE=specific_urls` → skip subdomain enumeration in Phase 2 (waste of time), focus on the specific in-scope URLs
    - If `SCOPE_TYPE=wildcard_or_cidr` → proceed with full subdomain enumeration
-6. Create session: `python $TK/scripts/session_manager.py create <target> hunt-<target>-$(date +%Y%m%d) scope.json`
-7. Display a brief scope summary (high-value targets, mobile apps, exclusions) and **immediately continue to Phase 2** — do NOT wait for user confirmation
+7. Create session: `python $TK/scripts/session_manager.py create <target> hunt-<target>-$(date +%Y%m%d) scope.json`
+8. Display a brief scope summary (high-value targets, mobile apps, exclusions) and **immediately continue to Phase 2** — do NOT wait for user confirmation
 
 **Output:** `hunt-<target>/scope.json`, `hunt-<target>/session.json`
 
