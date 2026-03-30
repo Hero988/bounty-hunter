@@ -211,6 +211,7 @@ The recon orchestrator already handles httpx probing and nmap scanning. Review t
 3. Read `hunt-<target>/recon/nmap-results.txt` (if exists) — check for unusual open ports
 4. Identify **high-value targets**: admin panels, API endpoints, login pages, file upload forms, GraphQL endpoints, older/legacy systems
 5. Create `hunt-<target>/recon/priority-targets.md` listing the most promising hosts to test
+6. **If Cloudflare blocks active probing**: Skip httpx/nmap, focus on passive techniques (Wayback Machine, JS bundle analysis, GitHub OSINT, APK analysis). Set up CDP browser bridge for later authenticated testing.
 6. Update session phase
 
 **Decision tree for prioritization:**
@@ -275,6 +276,17 @@ The recon orchestrator already handles httpx probing and nmap scanning. Review t
    - Use `WebFetch` to retrieve and analyze significant JS files
    - Document findings in `hunt-<target>/recon/js-analysis.md`
 
+3. **SPA Bundle API Extraction** (most productive technique for modern SPAs):
+   - Download the main JS bundle: `curl -s TARGET/main.*.js > bundle.js`
+   - Extract ALL API endpoints: `grep -oE '/api/v[0-9]+/[a-zA-Z0-9_/]+' bundle.js | sort -u`
+   - Find separate API domains: `grep -oE '(apiUrl|publicApiUrl|baseUrl)[^,}]*' bundle.js`
+   - Find auth mechanism: `grep -oE '.{0,80}(X-API-KEY|Authorization|sign\().{0,80}' bundle.js`
+   - **This often discovers 100-200+ endpoints** including internal/undocumented ones
+   - Check for multiple API namespaces (e.g., `/api/v3/`, `/api/v4/`, `/public_api/v1/`)
+   - Save to `hunt-<target>/recon/api-endpoints.txt`
+
+4. **SPA Catch-All Detection**: Test if random paths return 200 — if so, the app uses client-side routing and non-API 200s are false positives
+
 3. Review discovered parameters: `cat hunt-<target>/recon/parameters.json`
    - Flag interesting parameters: `id`, `user`, `account`, `file`, `path`, `url`, `redirect`, `callback`, `template`, `query`, `search`, `cmd`, `exec`
 
@@ -285,6 +297,13 @@ The recon orchestrator already handles httpx probing and nmap scanning. Review t
 ## Phase 5: Vulnerability Scanning
 
 **Goal:** Run automated scanners — nuclei for known CVEs, OWASP ZAP for active web app testing.
+
+### Step 0: Check Scanner Policy
+**CRITICAL**: Some programs explicitly ban automated scanners ("Do not use scanners or automated tools"). If the program policy says this:
+- **SKIP** nuclei, nmap, ffuf, katana, and all automated scanning
+- **FOCUS ON**: JS bundle analysis for API endpoint discovery, APK analysis (offline), manual testing via CDP browser bridge
+- **USE**: `curl -s TARGET/main.*.js | grep -oE '/api/v[0-9]+/[a-zA-Z0-9_/]+'` to discover API endpoints from the SPA JavaScript bundle — this is often MORE productive than scanner-based discovery
+- The JS bundle typically reveals the COMPLETE API surface including internal/undocumented endpoints
 
 ### Step 1: Nuclei Scanning (known vulnerabilities)
 ```bash
@@ -338,6 +357,12 @@ Review findings from BOTH nuclei and ZAP:
    This tries:
    - **Layer 1 — Browser cookies (zero effort)**: Extracts from Firefox/Chrome/Edge/Brave using `browser_cookie3`/`rookiepy`. Works on Firefox and older Chrome. May fail on Chrome 130+ Windows (app-bound encryption).
    - **Layer 3 — APK tokens**: Uses hardcoded tokens found during Phase 3.5 APK analysis.
+   - **Layer 4 — CDP Browser Bridge**: When Cloudflare blocks all automated tools, launch a real browser with remote debugging and connect via CDP:
+     ```bash
+     # Launch Edge (Windows) or Chrome as separate debug instance
+     msedge --remote-debugging-port=9222 --user-data-dir="$HUNT_DIR/edge-profile" "$TARGET_URL"
+     ```
+     User logs in manually, then Claude Code connects via Playwright CDP to make authenticated requests through the real browser, bypassing Cloudflare's TLS fingerprinting.
 
 2. **If auto-auth succeeds** (`AUTH_SUCCESS=true`):
    - Cookies saved to `hunt-<target>/auth/cookies.json` + `hunt-<target>/auth/cookies.txt` (curl format)
@@ -393,6 +418,7 @@ Use `WebFetch` to read the target's main pages and understand:
 | AI/chatbot | `$TK/references/vuln-classes/ai-llm.md` | Prompt injection, data exfiltration, agent abuse |
 | Redirects | `$TK/references/vuln-classes/client-side.md` | Open redirect, CSPT, OAuth flow abuse |
 | Admin panel | `$TK/references/vuln-classes/access-control.md` | Auth bypass, vertical privilege escalation |
+| Signed API auth (X-API-KEY) | `$TK/references/vuln-classes/api-security.md` | Replay attack, timestamp bypass, algorithm confusion, key storage |
 
 ### Step 3: Execute Testing
 For each selected area:
